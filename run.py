@@ -4,6 +4,9 @@ import time
 from dotenv import load_dotenv
 import google.generativeai as genai
 from md2pdf.core import md2pdf
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+import io
 
 # Load environment variables from .env file
 load_dotenv()
@@ -46,6 +49,22 @@ def wait_for_files_active(files):
     if file.state.name != "ACTIVE":
       raise Exception(f"File {file.name} failed to process")
 
+def create_final_page(text, output_path):
+    packet = io.BytesIO()
+    can = canvas.Canvas(packet, pagesize=letter)
+    width, height = letter
+    can.drawCentredString(width / 2.0, height / 2.0, text)
+    can.save()
+
+    packet.seek(0)
+    new_pdf = PdfReader(packet)
+    output = PdfWriter()
+
+    for page in new_pdf.pages:
+        output.add_page(page)
+
+    with open(output_path, "wb") as outputStream:
+        output.write(outputStream)
 
 # Create the model
 from google.generativeai import GenerationConfig
@@ -149,6 +168,13 @@ for file in appended_pdf_files:
     pdf_reader = PdfReader(file_path)
     for page_num in range(len(pdf_reader.pages)):
         pdf_writer.add_page(pdf_reader.pages[page_num])
+
+final_page_pdf_path = "stage/finalPage.pdf"
+final_page_text = "Generated Using code from https://github.com/wnds/transliteration-kannanda-school-book. Thank You"
+create_final_page(final_page_text, final_page_pdf_path)
+
+pdf_reader = PdfReader(final_page_pdf_path)
+pdf_writer.add_page(pdf_reader.pages[0])
 
 # Write the combined PDF to the output file
 with open(output_file_name, "wb") as output_pdf:
