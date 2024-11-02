@@ -22,46 +22,46 @@ STAGE_DIRECTORY = "stage"
 genai.configure(api_key=GEMINI_API_KEY)
 
 def get_page_number(file_path):
-  """
-  Extracts the page number from the filename.
-  Args:
-  filename (str): The name of the file.
-  Returns:
-  int: The extracted page number. Returns a large number if no match is found to push such files to the end.
-  """
-  match = re.search(r'pages-(\d+)\.pdf$', file_path)
-  if match:
-    return int(match.group(1))
-  return float('inf') # Files without a page number are placed at the end
+    """
+    Extracts the page number from the filename.
+    Args:
+        filename (str): The name of the file.
+    Returns:
+        int: The extracted page number. Returns a large number if no match is found to push such files to the end.
+    """
+    match = re.search(r'pages-(\d+)', file_path)
+    if match:
+        return int(match.group(1))
+    return float('inf')  # Files without a page number are placed at the end
 
 def upload_to_gemini(path, mime_type=None):
-  """Uploads the given file to Gemini.
+    """Uploads the given file to Gemini.
 
-  See https://ai.google.dev/gemini-api/docs/prompting_with_media
-  """
-  file = genai.upload_file(path, mime_type=mime_type)
-  print(f"Uploaded file '{file.display_name}' as: {file.uri}")
-  return file
+    See https://ai.google.dev/gemini-api/docs/prompting_with_media
+    """
+    file = genai.upload_file(path, mime_type=mime_type)
+    print(f"Uploaded file '{file.display_name}' as: {file.uri}")
+    return file
 
 def wait_for_files_active(files):
-  """Waits for the given files to be active.
+    """Waits for the given files to be active.
 
-  Some files uploaded to the Gemini API need to be processed before they can be
-  used as prompt inputs. The status can be seen by querying the file's "state"
-  field.
+    Some files uploaded to the Gemini API need to be processed before they can be
+    used as prompt inputs. The status can be seen by querying the file's "state"
+    field.
 
-  This implementation uses a simple blocking polling loop. Production code
-  should probably employ a more sophisticated approach.
-  """
-  print("Waiting for file processing...")
-  for name in (file.name for file in files):
-    file = genai.get_file(name)
-    while file.state.name == "PROCESSING":
-      print(".", end="", flush=True)
-      time.sleep(5)
-      file = genai.get_file(name)
-    if file.state.name != "ACTIVE":
-      raise Exception(f"File {file.name} failed to process")
+    This implementation uses a simple blocking polling loop. Production code
+    should probably employ a more sophisticated approach.
+    """
+    print("Waiting for file processing...")
+    for name in (file.name for file in files):
+        file = genai.get_file(name)
+        while file.state.name == "PROCESSING":
+            print(".", end="", flush=True)
+            time.sleep(5)
+            file = genai.get_file(name)
+        if file.state.name != "ACTIVE":
+            raise Exception(f"File {file.name} failed to process")
 
 def create_final_page(text, output_path):
     packet = io.BytesIO()
@@ -80,22 +80,21 @@ def create_final_page(text, output_path):
     with open(output_path, "wb") as outputStream:
         output.write(outputStream)
 
-# Create the model
 from google.generativeai import GenerationConfig
 
 generation_config = GenerationConfig(
-  temperature=1,
-  top_p=0.95,
-  top_k=64,
-  max_output_tokens=8192,
-  response_mime_type="text/plain",
+    temperature=1,
+    top_p=0.95,
+    top_k=64,
+    max_output_tokens=8192,
+    response_mime_type="text/plain",
 )
 
 model = genai.GenerativeModel(
-  model_name="gemini-1.5-pro",
-  generation_config=generation_config,
-  # safety_settings = Adjust safety settings
-  # See https://ai.google.dev/gemini-api/docs/safety-settings
+    model_name="gemini-1.5-pro",
+    generation_config=generation_config,
+    # safety_settings = Adjust safety settings
+    # See https://ai.google.dev/gemini-api/docs/safety-settings
 )
 
 # List all files in the directory
@@ -129,7 +128,8 @@ for file in pdf_files:
     print(f"Processing file: {file}")
 
     # Define the expected appended PDF file name
-    appended_pdf_file_name = "stage/" + os.path.splitext(file)[0] + "_appended.pdf"
+    base_name = os.path.splitext(file)[0]
+    appended_pdf_file_name = os.path.join(STAGE_DIRECTORY, f"{base_name}_appended.pdf")
 
     # Check if the appended PDF already exists
     if os.path.exists(appended_pdf_file_name):
@@ -147,7 +147,7 @@ for file in pdf_files:
     print(response.text)
 
     # Save the response as a .md file with name same as the uploaded file
-    response_file_name = "stage/" + os.path.splitext(uploaded_file.display_name)[0] + ".md"
+    response_file_name = os.path.join(STAGE_DIRECTORY, f"{base_name}.md")
     
     # Check if the Markdown file already exists
     if os.path.exists(response_file_name):
@@ -158,7 +158,7 @@ for file in pdf_files:
         print(f"Saved response as: {response_file_name}")
 
     # Convert markdown to PDF using md2pdf
-    pdf_file_name = os.path.splitext(response_file_name)[0] + "_response.pdf"
+    pdf_file_name = os.path.join(STAGE_DIRECTORY, f"{base_name}_response.pdf")
     
     # Check if the response PDF already exists
     if os.path.exists(pdf_file_name):
@@ -194,7 +194,9 @@ files_in_stage = os.listdir(STAGE_DIRECTORY)
 
 # Filter files to include only *_appended.pdf files
 appended_pdf_files = [f for f in files_in_stage if f.endswith('_appended.pdf')]
-appended_pdf_files.sort()
+
+# Sort the appended PDFs using the same sort key as input files
+appended_pdf_files.sort(key=get_page_number)
 
 # Create a PdfWriter object
 pdf_writer = PdfWriter()
@@ -206,7 +208,7 @@ for file in appended_pdf_files:
     for page_num in range(len(pdf_reader.pages)):
         pdf_writer.add_page(pdf_reader.pages[page_num])
 
-final_page_pdf_path = "stage/finalPage.pdf"
+final_page_pdf_path = os.path.join(STAGE_DIRECTORY, "finalPage.pdf")
 final_page_text = "Generated Using code from https://github.com/wnds/transliteration-kannanda-school-book. Thank You"
 create_final_page(final_page_text, final_page_pdf_path)
 
