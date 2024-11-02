@@ -2,3 +2,4 @@
 *.pdf
 *.md
 stage
+.DS_Store

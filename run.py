@@ -7,6 +7,7 @@ from md2pdf.core import md2pdf
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import io
+import re
 
 # Load environment variables from .env file
 load_dotenv()
@@ -19,6 +20,19 @@ DIRECTORY_PATH = os.getenv('DIRECTORY_PATH', '')
 STAGE_DIRECTORY = "stage"
 
 genai.configure(api_key=GEMINI_API_KEY)
+
+def get_page_number(file_path):
+  """
+  Extracts the page number from the filename.
+  Args:
+  filename (str): The name of the file.
+  Returns:
+  int: The extracted page number. Returns a large number if no match is found to push such files to the end.
+  """
+  match = re.search(r'pages-(\d+)\.pdf$', file_path)
+  if match:
+    return int(match.group(1))
+  return float('inf') # Files without a page number are placed at the end
 
 def upload_to_gemini(path, mime_type=None):
   """Uploads the given file to Gemini.
@@ -90,8 +104,8 @@ files_in_directory = os.listdir(DIRECTORY_PATH)
 # Filter files if necessary (e.g., only PDF files)
 pdf_files = [f for f in files_in_directory if f.endswith('.pdf')]
 
-# Sort the PDF files in lexical order
-pdf_files.sort()
+# Implement numerical sorting based on the extracted page numbers
+pdf_files.sort(key=get_page_number)
 
 # Define the prompt template
 prompt_template = """
@@ -109,45 +123,68 @@ chat_session = model.start_chat()
 response = chat_session.send_message(prompt_template)
 print(response.text)
 
-# Upload each file based on the response
+# Uploading and Processing PDFs
+
 for file in pdf_files:
+    print(f"Processing file: {file}")
+
+    # Define the expected appended PDF file name
+    appended_pdf_file_name = "stage/" + os.path.splitext(file)[0] + "_appended.pdf"
+
+    # Check if the appended PDF already exists
+    if os.path.exists(appended_pdf_file_name):
+        print(f"Output file '{appended_pdf_file_name}' already exists. Skipping translation for '{file}'.")
+        continue  # Skip to the next file
+
     print(f"Uploading file: {file}")
     uploaded_file = upload_to_gemini(os.path.join(DIRECTORY_PATH, file), mime_type="application/pdf")
     print(f"Uploaded file: {uploaded_file}")
 
     # Wait for the file to be processed
     wait_for_files_active([uploaded_file])
-    
+
     response = chat_session.send_message(uploaded_file)
     print(response.text)
-    
+
     # Save the response as a .md file with name same as the uploaded file
     response_file_name = "stage/" + os.path.splitext(uploaded_file.display_name)[0] + ".md"
-    with open(response_file_name, "w") as f:
-        f.write(response.text)
-    print(f"Saved response as: {response_file_name}")
+    
+    # Check if the Markdown file already exists
+    if os.path.exists(response_file_name):
+        print(f"Markdown file '{response_file_name}' already exists. Skipping Markdown creation for '{file}'.")
+    else:
+        with open(response_file_name, "w") as f:
+            f.write(response.text)
+        print(f"Saved response as: {response_file_name}")
 
     # Convert markdown to PDF using md2pdf
     pdf_file_name = os.path.splitext(response_file_name)[0] + "_response.pdf"
-    md2pdf(pdf_file_name, md_content=response.text)
-    print(f"Saved PDF as: {pdf_file_name}")
+    
+    # Check if the response PDF already exists
+    if os.path.exists(pdf_file_name):
+        print(f"Response PDF '{pdf_file_name}' already exists. Skipping PDF conversion for '{file}'.")
+    else:
+        md2pdf(pdf_file_name, md_content=response.text)
+        print(f"Saved PDF as: {pdf_file_name}")
 
     # Append the generated PDF to the uploaded PDF
-    output_pdf_file_name = "stage/" + os.path.splitext(uploaded_file.display_name)[0] + "_appended.pdf"
-    with open(os.path.join(DIRECTORY_PATH, file), "rb") as original, open(pdf_file_name, "rb") as response_pdf:
-        original_pdf_reader = PdfReader(original)
-        response_pdf_reader = PdfReader(response_pdf)
-        pdf_writer = PdfWriter()
+    if os.path.exists(appended_pdf_file_name):
+        print(f"Appended PDF '{appended_pdf_file_name}' already exists. Skipping PDF appending for '{file}'.")
+    else:
+        with open(os.path.join(DIRECTORY_PATH, file), "rb") as original, open(pdf_file_name, "rb") as response_pdf:
+            original_pdf_reader = PdfReader(original)
+            response_pdf_reader = PdfReader(response_pdf)
+            pdf_writer = PdfWriter()
 
-        for page_num in range(len(original_pdf_reader.pages)):
-            pdf_writer.add_page(original_pdf_reader.pages[page_num])
+            for page_num in range(len(original_pdf_reader.pages)):
+                pdf_writer.add_page(original_pdf_reader.pages[page_num])
 
-        for page_num in range(len(response_pdf_reader.pages)):
-            pdf_writer.add_page(response_pdf_reader.pages[page_num])
+            for page_num in range(len(response_pdf_reader.pages)):
+                pdf_writer.add_page(response_pdf_reader.pages[page_num])
 
-        with open(output_pdf_file_name, "wb") as output_pdf:
-            pdf_writer.write(output_pdf)
-    print(f"Appended PDF saved as: {output_pdf_file_name}")
+            with open(appended_pdf_file_name, "wb") as output_pdf:
+                pdf_writer.write(output_pdf)
+        print(f"Appended PDF saved as: {appended_pdf_file_name}")
 
 # Output file name
 output_file_name = "Final.pdf"
